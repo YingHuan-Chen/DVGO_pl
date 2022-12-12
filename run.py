@@ -134,6 +134,10 @@ class DVGOTrainer(LightningModule):
             param_group['lr'] = param_group['lr'] * self.decay_factor
 
         if self.global_step == 10000:
+            for param in self.model.parameters():
+                print(param)
+                param.requires_grad = False
+            
             fine_xyz_min , fine_xyz_max = self.model.define_fine_bbox()
             self.model.start_fine(fine_xyz_min , fine_xyz_max)
             self.configure_optimizers()
@@ -146,7 +150,6 @@ class DVGOTrainer(LightningModule):
         ray_d = ray_d.squeeze()
         rgbs = rgbs.squeeze()
         viewdirs = viewdirs.squeeze()
-        #rgb_map, density_map = self.model.get_coarse_output(rays_o=ray_o, rays_d=ray_d) 
 
         rgb_map = torch.tensor([]).cuda()
         density_map = torch.tensor([]).cuda()

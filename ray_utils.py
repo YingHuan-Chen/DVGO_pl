@@ -180,7 +180,6 @@ def sample_pts_by_voxel_size(rays_o, rays_d, near, far, xyz_max, xyz_min, step_s
     t_2 = ((xyz_min.to(rays_o.device) - rays_o) / (rays_d + 1e-6)) #(num_rays,3)
     t_min = torch.minimum(t_1, t_2).amax(-1).clamp(min=near, max=far)
     t_max = torch.maximum(t_1, t_2).amin(-1).clamp(min=near, max=far)
-    #mask = (t_max <= t_min)
     z_vals = (torch.arange(samples_per_ray)).to(rays_o.device)*step_size
 
     #z_vals = repeat(z_vals, 'n -> r n', r = rays_o.shape[0])
@@ -209,7 +208,6 @@ def compute_rays_pts_mask(rays_pts, xyz_max, xyz_min):
                                                    rays_pts.shape[1], 3)
     xyz_max = xyz_max.to(rays_pts.device)
     xyz_min = xyz_min.to(rays_pts.device)
-
     mask_high = torch.all(rays_pts < xyz_max, dim=-1)
     mask_low = torch.all(rays_pts > xyz_min, dim=-1)
     return torch.logical_and(mask_low, mask_high).to(rays_pts.device)
@@ -258,23 +256,22 @@ def compute_map(rgb, density, z_vals, rays_d, mask, white_background=False):
         rgb_map = rgb_map + (1. - acc_map)
     return rgb_map, depth_map
 
-def dvgo_compute_alpha(density, voxel_size_ratio):
-    distances = 0.5 * voxel_size_ratio
+def dvgo_compute_alpha(density, distances):
+    #distances = 0.5 * voxel_size_ratio
     return 1. - torch.exp((-density * distances))
 
-def dvgo_compute_weights(density, voxel_size_ratio):
-    alpha = dvgo_compute_alpha(density, voxel_size_ratio).squeeze()
+def dvgo_compute_weights(density, distances):
+    alpha = dvgo_compute_alpha(density, distances).squeeze()
     weights = alpha * torch.cumprod(
         torch.cat([
-            torch.ones(
-                (alpha.shape[0], 1), device = density.device), 1. - alpha + 1e-10
+            torch.ones((alpha.shape[0], 1), device = density.device), 1. - alpha + 1e-10
         ], -1), -1)[:, :-1]
     
     return weights
 
-def dvgo_compute_map(rgb, density, z_vals, voxel_size_ratio, mask, white_background=False):
+def dvgo_compute_map(rgb, density, z_vals, distances, mask, white_background=False):
     # (num_rays, num_pts)
-    weights = dvgo_compute_weights(density[..., 0] * mask.float(), voxel_size_ratio)
+    weights = dvgo_compute_weights(density[..., 0] * mask.float(), distances)
     # (num_rays, 3)
     rgb_map = torch.sum(weights[..., None] * rgb, dim=-2)
     # (num_rays, 1)

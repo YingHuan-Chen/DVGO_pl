@@ -42,11 +42,12 @@ class DVGO(nn.Module):
 
         self.voxel_size = self.voxel_size_coarse
         self.voxel_size_ratio = self.voxel_size/self.voxel_size_coarse
+        print('voxel_size: ', self.voxel_size)
         print('voxel_size_ratio: ', self.voxel_size_ratio)
 
-        self.coarse_Nx = int(self.Lx_coarse/self.voxel_size_coarse)+1 #torch.floor
-        self.coarse_Ny = int(self.Ly_coarse/self.voxel_size_coarse)+1 #torch.floor
-        self.coarse_Nz = int(self.Lz_coarse/self.voxel_size_coarse)+1 #torch.floor
+        self.coarse_Nx = int(self.Lx_coarse/self.voxel_size_coarse) #torch.floor
+        self.coarse_Ny = int(self.Ly_coarse/self.voxel_size_coarse) #torch.floor
+        self.coarse_Nz = int(self.Lz_coarse/self.voxel_size_coarse) #torch.floor
 
         self.Nx = self.coarse_Nx
         self.Ny = self.coarse_Ny
@@ -68,7 +69,7 @@ class DVGO(nn.Module):
         )
 
     def start_fine(self, fine_xyz_min , fine_xyz_max):
-
+        
         self.xyz_max = fine_xyz_max
         self.xyz_min = fine_xyz_min
 
@@ -76,14 +77,16 @@ class DVGO(nn.Module):
         self.Lx_fine, self.Ly_fine, self.Lz_fine = self.L_fine[0], self.L_fine[1], self.L_fine[2]
         self.voxel_size_fine = torch.pow(self.Lx_fine*self.Ly_fine*self.Lz_fine/self.num_voxels_fine,1/3)
 
-        self.num_voxels = self.num_voxels_fine
-        self.voxel_size = self.voxel_size_fine
+        self.num_voxels = self.num_voxels_fine/8
+        self.voxel_size = torch.pow(self.Lx_fine*self.Ly_fine*self.Lz_fine/self.num_voxels,1/3)
         self.voxel_size_ratio = self.voxel_size/self.voxel_size_fine
+        print('voxel_size: ', self.voxel_size)
+        print('voxel_size_base: ', self.voxel_size_fine)
         print('voxel_size_ratio: ', self.voxel_size_ratio)
 
-        self.fine_Nx = int(self.Lx_fine/self.voxel_size_fine)
-        self.fine_Ny = int(self.Ly_fine/self.voxel_size_fine)
-        self.fine_Nz = int(self.Lz_fine/self.voxel_size_fine)
+        self.fine_Nx = int(self.Lx_fine/self.voxel_size)
+        self.fine_Ny = int(self.Ly_fine/self.voxel_size)
+        self.fine_Nz = int(self.Lz_fine/self.voxel_size)
 
         self.Nx = self.fine_Nx
         self.Ny = self.fine_Nx
@@ -131,6 +134,7 @@ class DVGO(nn.Module):
         self.Nz = self.fine_Nx
 
         self.voxel_size_ratio = self.voxel_size/self.voxel_size_fine
+        print('voxel_size: ', self.voxel_size)
         print('voxel_size_ratio: ', self.voxel_size_ratio)
 
         self.fine_field.scale_volume_grid(self.fine_Nx, self.fine_Ny, self.fine_Nz)
@@ -138,7 +142,8 @@ class DVGO(nn.Module):
         print('new Ny: ', self.fine_Ny)
         print('new Nz: ', self.fine_Nz)
         print('Finish Scaling ')
-
+    
+    @torch.no_grad()
     def define_fine_bbox(self):
         print('Compute_fine_bbox: start')
         interp = torch.stack(torch.meshgrid(
@@ -149,14 +154,13 @@ class DVGO(nn.Module):
         dense_xyz = self.coarse_xyz_min * (1-interp) + self.coarse_xyz_max * interp
         dense_xyz = dense_xyz.to('cuda')
         density = self.coarse_field.get_coarse_density(dense_xyz)
-        #alpha = compute_alpha(density, 0.5*self.voxel_size_coarse)
-        alpha = dvgo_compute_alpha(density, self.voxel_size_ratio).squeeze()
+        alpha = dvgo_compute_alpha(density, 2.).squeeze()
         mask = (alpha > 1e-3)
         active_xyz = dense_xyz[mask]
-        self.fine_xyz_min = active_xyz.amin(0)
-        self.fine_xyz_max = active_xyz.amax(0)
-        #self.fine_xyz_min = dense_xyz.amin((0,1,2))
-        #self.fine_xyz_max = dense_xyz.amax((0,1,2))
+        #self.fine_xyz_min = active_xyz.amin(0)
+        #self.fine_xyz_max = active_xyz.amax(0)
+        self.fine_xyz_min = torch.tensor([-0.6873, -1.1898, -0.5533])
+        self.fine_xyz_max = torch.tensor([0.7330, 1.1971, 1.0907])
         print('Compute_fine_bbox: xyz_min', self.fine_xyz_min)
         print('Compute_fine_bbox: xyz_max', self.fine_xyz_max)
         return self.fine_xyz_min , self.fine_xyz_max
@@ -168,7 +172,7 @@ class DVGO(nn.Module):
         mask = compute_rays_pts_mask(rays_pts, self.coarse_xyz_max, self.coarse_xyz_min)
         density = self.coarse_field.get_coarse_density(rays_pts)
         rgb = self.coarse_field.get_coarse_color(rays_pts)
-        rgb_map, density_map = dvgo_compute_map(rgb, density, z_vals, self.voxel_size_ratio, mask)
+        rgb_map, density_map = dvgo_compute_map(rgb, density, z_vals, 0.5*self.voxel_size_ratio, mask)
         return rgb_map, density_map
     
     def get_fine_output(self, rays_o, rays_d, viewdirs):
@@ -178,7 +182,7 @@ class DVGO(nn.Module):
         mask = compute_rays_pts_mask(rays_pts, self.fine_xyz_max, self.fine_xyz_min)
         density = self.fine_field.get_fine_density(rays_pts)
         rgb = self.fine_field.get_fine_color(rays_pts,viewdirs)
-        rgb_map, density_map = dvgo_compute_map(rgb, density, z_vals, self.voxel_size_ratio, mask)
+        rgb_map, density_map = dvgo_compute_map(rgb, density, z_vals, 0.5*self.voxel_size_ratio, mask)
         return rgb_map, density_map
 
 if __name__ == "__main__":

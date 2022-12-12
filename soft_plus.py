@@ -14,6 +14,7 @@ class SoftPlus(nn.Module):
         power = -(1/self.voxel_size)
         #self.b = torch.log(torch.pow(1-(self.alpha_init).to(power.device), power) - 1)
         self.b = torch.log(1/(1-self.alpha_init) - 1)
+        print('b:', self.b)
     
     def forward(self, pre_density):
         self.b = self.b.to(pre_density.device)

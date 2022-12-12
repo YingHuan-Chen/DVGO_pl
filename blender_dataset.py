@@ -30,7 +30,7 @@ class BlenderDataset(Dataset):
         self.w, self.h = self.img_wh
         self.focal = 0.5*800/np.tan(0.5*self.meta['camera_angle_x']) # original focal length
                                                                      # when W=800
-        print(self.focal)
+
         self.focal *= self.img_wh[0]/800 # modify focal length to match size self.img_wh
 
         # bounds, common for all scenes
@@ -98,7 +98,6 @@ class BlenderDataset(Dataset):
     def voxel_count_views(self, channel, Nx, Ny, Nz, xyz_max, xyz_min, voxel_size):
         print('dvgo: voxel_count_views start')
         eps_time = time.time()
-        #return  torch.ones([1, channel, Nx, Ny, Nz])
         count = torch.zeros([1, channel, Nx, Ny, Nz]).to('cuda')
         samples_per_ray = int(np.linalg.norm(np.array([Nx, Ny, Nz])+1) / 0.5) + 1
         z_vals = torch.arange(samples_per_ray).to('cuda')*voxel_size*0.5
@@ -106,11 +105,9 @@ class BlenderDataset(Dataset):
  
         rays_o = self.all_ray_o.to('cuda').split(chunk_size)
         rays_d = self.all_ray_d.to('cuda').split(chunk_size)
-        i = 0
+
         ones = torch.ones([1, channel, Nx, Ny, Nz]).to('cuda').requires_grad_()
         for ray_os, ray_ds in zip(rays_o, rays_d):
-
-            print(i)
             ray_d_norm = ray_ds.norm(dim=-1, keepdim=True)
             #viewdirs = ray_ds/ray_d_norm
 
@@ -133,7 +130,6 @@ class BlenderDataset(Dataset):
             rays_pts = rays_pts.reshape(1, 1, 1, -1, 3)
             output = F.grid_sample(ones, rays_pts, mode='bilinear', align_corners=True)
             output = output.sum().backward()
-            i = i + 1
 
             with torch.no_grad():
                 count += (ones.grad > 1)
