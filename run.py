@@ -109,24 +109,32 @@ class DVGOTrainer(LightningModule):
                           pin_memory=True)
     
     def on_train_batch_start(self, batch, batch_idx):
-        if self.global_step in [11000, 12000, 13000]:#[11000, 12000, 13000, 14000]:[20, 30, 40, 50]
+        if self.global_step in [11000, 12000, 13000]:#[11000, 12000, 13000]
             self.model.ProgressiveScaling()
             self.configure_optimizers()
     
     def training_step(self, batch, batch_nb):
         ray_o, ray_d, rgbs, viewdirs = batch['ray_o'].to('cuda'), batch['ray_d'].to('cuda'), batch['rgbs'].to('cuda'), batch['viewdirs'].to('cuda')
         if self.global_step < 10000:
-            rgb_map, density_map = self.model.get_coarse_output(rays_o=ray_o, rays_d=ray_d)
+            rgb_map, density_map, alphainv_cum, raw_rgb, weights = self.model.get_coarse_output(rays_o=ray_o, rays_d=ray_d)
         else:
-            rgb_map, density_map = self.model.get_fine_output(rays_o=ray_o, rays_d=ray_d, viewdirs=viewdirs)
+            rgb_map, density_map, alphainv_cum, raw_rgb, weights = self.model.get_fine_output(rays_o=ray_o, rays_d=ray_d, viewdirs=viewdirs)
         rgb_map = rgb_map.clamp(0, 1)
         loss = self.rgb_loss(rgb_map, rgbs)
-        self.log('train/loss', loss)
         
         with torch.no_grad():
             psnr_ = self.psnr(rgb_map, rgbs)
             self.log('train/psnr',  psnr_)
+        
+        pout = alphainv_cum[...,-1].clamp(1e-6, 1-1e-6)
+        entropy_last_loss = -(pout*torch.log(pout) + (1-pout)*torch.log(1-pout)).mean()
+        loss += 0.01* entropy_last_loss
 
+        rgbper = (raw_rgb - rgbs.unsqueeze(-2)).pow(2).sum(-1)
+        rgbper_loss = (rgbper * weights.detach()).sum(-1).mean()
+        loss += 0.1* rgbper_loss
+        
+        self.log('train/loss', loss)
         return loss
     
     def on_train_batch_end(self, outputs, batch, batch_idx):
@@ -156,10 +164,10 @@ class DVGOTrainer(LightningModule):
 
         for i in range(0, int(ray_o.shape[0]), 8000):
             if self.global_step < 10000:
-                rgb_render, density_render = self.model.get_coarse_output(rays_o=ray_o[i:i+8000], 
+                rgb_render, density_render,_,_,_ = self.model.get_coarse_output(rays_o=ray_o[i:i+8000], 
                                                                     rays_d=ray_d[i:i+8000]) 
             else:
-                rgb_render, density_render = self.model.get_fine_output(rays_o=ray_o[i:i+8000], 
+                rgb_render, density_render,_,_,_ = self.model.get_fine_output(rays_o=ray_o[i:i+8000], 
                                                                     rays_d=ray_d[i:i+8000],
                                                                     viewdirs = viewdirs[i:i+8000])
             rgb_render = rgb_render.clamp(0, 1)

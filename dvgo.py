@@ -15,7 +15,6 @@ class DVGO(nn.Module):
         far,
         num_voxels_coarse = 1024000,
         num_voxels_fine = 160*160*160,
-        num_sample = 64,
     ):
         super(DVGO, self).__init__()
 
@@ -26,8 +25,6 @@ class DVGO(nn.Module):
 
         self.xyz_max = xyz_max
         self.xyz_min = xyz_min
-
-        self.num_sample = num_sample
 
         #self.position_encoding = Embedding(3, 10)
         #self.direction_encoding = Embedding(3, 4)
@@ -69,7 +66,7 @@ class DVGO(nn.Module):
         )
 
     def start_fine(self, fine_xyz_min , fine_xyz_max):
-        
+
         self.xyz_max = fine_xyz_max
         self.xyz_min = fine_xyz_min
 
@@ -172,8 +169,8 @@ class DVGO(nn.Module):
         mask = compute_rays_pts_mask(rays_pts, self.coarse_xyz_max, self.coarse_xyz_min)
         density = self.coarse_field.get_coarse_density(rays_pts)
         rgb = self.coarse_field.get_coarse_color(rays_pts)
-        rgb_map, density_map = dvgo_compute_map(rgb, density, z_vals, 0.5*self.voxel_size_ratio, mask)
-        return rgb_map, density_map
+        rgb_map, density_map, alphainv_cum, weights  = dvgo_compute_map(rgb, density, z_vals, 0.5*self.voxel_size_ratio, mask)
+        return rgb_map, density_map, alphainv_cum, rgb, weights
     
     def get_fine_output(self, rays_o, rays_d, viewdirs):
         samples_per_ray = int(np.linalg.norm(np.array([self.fine_Nx, self.fine_Ny, self.fine_Nz])+1) / 0.5) + 1
@@ -182,8 +179,8 @@ class DVGO(nn.Module):
         mask = compute_rays_pts_mask(rays_pts, self.fine_xyz_max, self.fine_xyz_min)
         density = self.fine_field.get_fine_density(rays_pts)
         rgb = self.fine_field.get_fine_color(rays_pts,viewdirs)
-        rgb_map, density_map = dvgo_compute_map(rgb, density, z_vals, 0.5*self.voxel_size_ratio, mask)
-        return rgb_map, density_map
+        rgb_map, density_map, alphainv_cum, weights = dvgo_compute_map(rgb, density, z_vals, 0.5*self.voxel_size_ratio, mask)
+        return rgb_map, density_map, alphainv_cum, rgb, weights
 
 if __name__ == "__main__":
     intrinsic = torch.FloatTensor(

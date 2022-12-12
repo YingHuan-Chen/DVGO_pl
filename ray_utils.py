@@ -262,16 +262,16 @@ def dvgo_compute_alpha(density, distances):
 
 def dvgo_compute_weights(density, distances):
     alpha = dvgo_compute_alpha(density, distances).squeeze()
-    weights = alpha * torch.cumprod(
+    alphainv_cum = torch.cumprod(
         torch.cat([
             torch.ones((alpha.shape[0], 1), device = density.device), 1. - alpha + 1e-10
         ], -1), -1)[:, :-1]
-    
-    return weights
+    weights = alpha * alphainv_cum 
+    return weights, alphainv_cum 
 
 def dvgo_compute_map(rgb, density, z_vals, distances, mask, white_background=False):
     # (num_rays, num_pts)
-    weights = dvgo_compute_weights(density[..., 0] * mask.float(), distances)
+    weights, alphainv_cum  = dvgo_compute_weights(density[..., 0] * mask.float(), distances)
     # (num_rays, 3)
     rgb_map = torch.sum(weights[..., None] * rgb, dim=-2)
     # (num_rays, 1)
@@ -280,7 +280,7 @@ def dvgo_compute_map(rgb, density, z_vals, distances, mask, white_background=Fal
     acc_map = torch.sum(weights, dim=-1, keepdim=True)
     if white_background:
         rgb_map = rgb_map + (1. - acc_map)
-    return rgb_map, depth_map
+    return rgb_map, depth_map, alphainv_cum, weights
 
 if __name__ == "__main__":
     intrinsic = torch.FloatTensor(
