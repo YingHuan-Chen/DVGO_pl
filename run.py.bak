@@ -26,9 +26,7 @@ from einops import rearrange
 
 from visualization import visualize_depth
 
-import imageio
-import numpy as np
-import time
+
 
 class DVGOTrainer(LightningModule):
     def __init__(self):
@@ -40,12 +38,7 @@ class DVGOTrainer(LightningModule):
         self.decay_factor = 0.1 ** (self.global_step/self.decay_steps)
         #self.ssim = structural_similarity_index_measure
         #self.lpips = LearnedPerceptualImagePatchSimilarity()
-        self.batch_time = time.time()
-        self.step_psnr_set = []
-        self.step_cnt_set = []
-        self.valid_time = time.time()
-        self.valid_gap = 0
-        self.save_coarse_model = True
+    
     def setup(self, stage=None):
         """
         setup dataset for each machine
@@ -60,7 +53,7 @@ class DVGOTrainer(LightningModule):
 
         self.xyz_max_coarse , self.xyz_min_coarse = self.train_dataset.define_bbox()
         self.near, self.far =  self.train_dataset.get_bound()
-        
+
         self.model = DVGO(
             xyz_max = self.xyz_max_coarse,
             xyz_min = self.xyz_min_coarse,
@@ -69,16 +62,7 @@ class DVGOTrainer(LightningModule):
             num_voxels_coarse = 1024000,
             num_voxels_fine = 160*160*160
         )
-        self.optimizer = Adam(self.model.parameters(), lr=self.lr)
-        if (os.path.isfile('Coarse_last.tar')):
-            self.save_coarse_model = False
-            ckpt = torch.load('Coarse_last.tar')
-            
-            self.model.load_state_dict(ckpt['model_state_dict'])
-            self.optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-            print ("Load saved model")
-            
-            
+
     def train_dataloader(self):
         return DataLoader(
             self.train_dataset,
@@ -101,11 +85,11 @@ class DVGOTrainer(LightningModule):
         '''
         print('============================================================================')
         for name, param in self.model.state_dict().items():
-            print(name, param.size())    
+            print(name, param.size())
         print('============================================================================')
         '''
         self.optimizer = Adam(self.model.parameters(), lr=self.lr)
-        if  self.global_step < 10000 and self.save_coarse_model:
+        if  self.global_step < 10000:
             count = self.model.voxel_count_view(self.train_dataset)
             self.optimizer.set_pervoxel_lr(count)
         return self.optimizer
@@ -128,24 +112,11 @@ class DVGOTrainer(LightningModule):
         if self.global_step in [11000, 12000, 13000]:#[11000, 12000, 13000]
             self.model.ProgressiveScaling()
             self.configure_optimizers()
-        if self.global_step == 0 and self.save_coarse_model == False:
-            for param_group in self.optimizer.param_groups:
-                param_group['lr'] = param_group['lr'] * self.decay_factor
-            for param in self.model.parameters():
-                #print(param)
-                param.requires_grad = False
-            fine_xyz_min , fine_xyz_max = self.model.define_fine_bbox()
-            self.model.start_fine(fine_xyz_min , fine_xyz_max)
-            self.configure_optimizers()
-            print("Starts fine training!")
     
     def training_step(self, batch, batch_nb):
         ray_o, ray_d, rgbs, viewdirs = batch['ray_o'].to('cuda'), batch['ray_d'].to('cuda'), batch['rgbs'].to('cuda'), batch['viewdirs'].to('cuda')
-        if self.global_step < 10000 and self.save_coarse_model:
+        if self.global_step < 10000:
             rgb_map, density_map, alphainv_cum, raw_rgb, weights = self.model.get_coarse_output(rays_o=ray_o, rays_d=ray_d)
-            
-            step_psnr = self.psnr(rgb_map, rgbs)
-            self.step_psnr_set.append(step_psnr.tolist())
         else:
             rgb_map, density_map, alphainv_cum, raw_rgb, weights = self.model.get_fine_output(rays_o=ray_o, rays_d=ray_d, viewdirs=viewdirs)
         rgb_map = rgb_map.clamp(0, 1)
@@ -170,35 +141,17 @@ class DVGOTrainer(LightningModule):
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = param_group['lr'] * self.decay_factor
 
-        if self.global_step == 10000 and self.save_coarse_model:
+        if self.global_step == 10000:
             for param in self.model.parameters():
                 print(param)
                 param.requires_grad = False
-            if (self.save_coarse_model):
-                torch.save({
-                    'global_step': self.global_step,
-                    'model_state_dict': self.model.state_dict(),
-                    'optimizer_state_dict': self.optimizer.state_dict(),
-                }, 'Coarse_last.tar')
-                print("Save coarse model")
+            
             fine_xyz_min , fine_xyz_max = self.model.define_fine_bbox()
             self.model.start_fine(fine_xyz_min , fine_xyz_max)
             self.configure_optimizers()
             print("Starts fine training!")
-            
-            end_time = time.time()
-            f=open("psnr_step_batch_" + str(batch_idx) + ".csv", "w")
-            f.write("Batch Time: " + str(end_time - self.batch_time - self.valid_gap))
-            self.end_time = end_time
-            for i in self.step_psnr_set:
-                f.write(str(i) + "\n")
-            f.close()
-            self.step_psnr_set = []
-            
 
-    def on_validation_batch_start(self, batch, batch_idx, dataloader_idx):
-        self.valid_time = time.time()
-        
+
     def validation_step(self, batch, batch_nb):
         ray_o, ray_d, rgbs, viewdirs = batch['ray_o'].to('cuda'), batch['ray_d'].to('cuda'), batch['rgbs'].to('cuda'), batch['viewdirs'].to('cuda')
         ray_o = ray_o.squeeze()
@@ -210,7 +163,7 @@ class DVGOTrainer(LightningModule):
         density_map = torch.tensor([]).cuda()
 
         for i in range(0, int(ray_o.shape[0]), 8000):
-            if self.global_step < 10000 :
+            if self.global_step < 10000:
                 rgb_render, density_render,_,_,_ = self.model.get_coarse_output(rays_o=ray_o[i:i+8000], 
                                                                     rays_d=ray_d[i:i+8000]) 
             else:
@@ -247,8 +200,6 @@ class DVGOTrainer(LightningModule):
 
         self.log('val/loss', mean_loss, prog_bar=True)
         self.log('val/psnr', mean_psnr, prog_bar=True)
-        v_end_time = time.time()
-        self.valid_gap = v_end_time- self.valid_time
 
 
 if __name__ == '__main__':
@@ -271,7 +222,7 @@ if __name__ == '__main__':
                       enable_model_summary=True,
                       accelerator='auto',
                       devices=1,
-                      gpus=[0],
+                      gpus=[2],
                       num_sanity_val_steps=1,
                       benchmark=True)
 
